@@ -16,7 +16,6 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        /* Kaydırma çubuğunu gizlemek için */
         .hide-scrollbar::-webkit-scrollbar {
             display: none;
         }
@@ -40,7 +39,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- ICON COMPONENTS (Lucide React Replacements for Browser) ---
+        // --- ICON COMPONENTS ---
         const IconBase = ({ children, className, ...props }) => (
             <svg 
                 xmlns="http://www.w3.org/2000/svg" 
@@ -66,10 +65,14 @@
         const ChevronRight = (props) => <IconBase {...props}><polyline points="9 18 15 12 9 6"/></IconBase>;
         const Cloud = (props) => <IconBase {...props}><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></IconBase>;
         const Loader2 = (props) => <IconBase {...props}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></IconBase>;
+        const FastForward = (props) => <IconBase {...props}><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></IconBase>;
 
         // --- CONFIG & DATA ---
-        const WEEKLY_PLAN = {
-          Pazartesi: {
+        // Artık Gün İsimleri yerine Pattern Key'leri kullanıyoruz
+        const WORKOUT_PATTERN = {
+          day1: {
+            id: 'day1',
+            shortTitle: "1. Gün",
             focus: "Üst Vücut - Güç",
             desc: "Temel itiş ve çekiş gücü.",
             warmup: [
@@ -84,7 +87,9 @@
               { id: 'm1_5', name: 'Dumbbell Shrugs', sets: '3 Set x 15' },
             ]
           },
-          Salı: {
+          day2: {
+            id: 'day2',
+            shortTitle: "2. Gün",
             focus: "Alt Vücut & Rehab",
             desc: "Statik güç ve VMO aktivasyonu.",
             warmup: [
@@ -99,7 +104,9 @@
               { id: 'tu_5', name: 'Plank', sets: '3 Set x Max' },
             ]
           },
-          Çarşamba: {
+          day3: {
+            id: 'day3',
+            shortTitle: "3. Gün",
             focus: "Üst Vücut - Omuz & Kol",
             desc: "Görsel gelişim ve izolasyon.",
             warmup: [
@@ -114,7 +121,9 @@
               { id: 'wed_5', name: 'Hammer Curls', sets: '3 Set x 12 Tekrar' },
             ]
           },
-          Perşembe: {
+          day4: {
+            id: 'day4',
+            shortTitle: "4. Gün",
             focus: "Alt Vücut - Arka Zincir",
             desc: "Dize yük bindirmeden güç.",
             warmup: [
@@ -128,7 +137,9 @@
               { id: 'thu_4', name: 'Dead Bug (Core)', sets: '3 Set x 15 Tekrar' },
             ]
           },
-          Cuma: {
+          day5: {
+            id: 'day5',
+            shortTitle: "5. Gün",
             focus: "Kondisyon & Fullbody",
             desc: "Süpersetlerle nabız yükseltme.",
             warmup: [
@@ -143,10 +154,18 @@
           }
         };
 
-        const DAYS = Object.keys(WEEKLY_PLAN);
+        const PATTERN_KEYS = Object.keys(WORKOUT_PATTERN);
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyQZnsRe5nANmxi3DOjLQfIPEamiJp_VCtFqetQPBbmQlgwFG4hsJHUF-EkgNeOxDAfbQ/exec";
 
-        // --- Helper Functions ---
+        // Eski verileri yeni sisteme eşleme haritası
+        const LEGACY_MAP = {
+          'Pazartesi': 'day1',
+          'Salı': 'day2',
+          'Çarşamba': 'day3',
+          'Perşembe': 'day4',
+          'Cuma': 'day5'
+        };
+
         const getDayName = (dateString) => {
             const date = new Date(dateString);
             const options = { weekday: 'long' };
@@ -161,7 +180,10 @@
         function RehabApp() {
             const [activeTab, setActiveTab] = useState('workout');
             const [selectedDate, setSelectedDate] = useState(getTodayDateString());
-            const [selectedDay, setSelectedDay] = useState('Pazartesi');
+            
+            // selectedPatternKey: Şu an ekranda hangi antrenman (1. Gün, 2. Gün vb.) seçili?
+            const [selectedPatternKey, setSelectedPatternKey] = useState('day1');
+            
             const [checkedItems, setCheckedItems] = useState({});
             const [history, setHistory] = useState([]);
             const [showConfetti, setShowConfetti] = useState(false);
@@ -174,14 +196,35 @@
                 const savedChecks = localStorage.getItem('currentSessionChecks');
                 const savedDate = localStorage.getItem('lastSelectedDate');
                 
-                if (savedHistory) setHistory(JSON.parse(savedHistory));
+                let parsedHistory = [];
+                if (savedHistory) {
+                    parsedHistory = JSON.parse(savedHistory);
+                    setHistory(parsedHistory);
+                }
                 if (savedChecks) setCheckedItems(JSON.parse(savedChecks));
-                
-                if (savedDate) {
-                    setSelectedDate(savedDate);
-                    syncDayWithDate(savedDate);
-                } else {
-                    syncDayWithDate(getTodayDateString());
+                if (savedDate) setSelectedDate(savedDate);
+
+                // --- AKILLI GÜN SEÇİMİ ---
+                // Son yapılan antrenmanı bul ve bir sonrakini öner
+                if (parsedHistory.length > 0) {
+                    // En yeni kaydı bul (timestamp'e göre sıralı olduğunu varsayıyoruz, ama garanti olsun)
+                    const lastLog = parsedHistory.sort((a, b) => b.timestamp - a.timestamp)[0];
+                    
+                    let lastKey = lastLog.patternKey; // Yeni sistemde bu field olacak
+                    
+                    // Eski sistemden gelen veri varsa (Pazartesi vb.), dönüştür
+                    if (!lastKey && lastLog.day && LEGACY_MAP[lastLog.day]) {
+                        lastKey = LEGACY_MAP[lastLog.day];
+                    }
+
+                    if (lastKey) {
+                        const currentIndex = PATTERN_KEYS.indexOf(lastKey);
+                        if (currentIndex !== -1) {
+                            // Bir sonraki gün (Modülo 5 ile döngü)
+                            const nextIndex = (currentIndex + 1) % PATTERN_KEYS.length;
+                            setSelectedPatternKey(PATTERN_KEYS[nextIndex]);
+                        }
+                    }
                 }
             }, []);
 
@@ -193,17 +236,9 @@
                 localStorage.setItem('lastSelectedDate', selectedDate);
             }, [selectedDate]);
 
-            const syncDayWithDate = (dateVal) => {
-                const dayName = getDayName(dateVal);
-                if (WEEKLY_PLAN[dayName]) {
-                    setSelectedDay(dayName);
-                } 
-            };
-
             const handleDateChange = (e) => {
                 const newDate = e.target.value;
                 setSelectedDate(newDate);
-                syncDayWithDate(newDate);
             };
 
             const toggleCheck = (id) => {
@@ -214,13 +249,13 @@
             };
 
             const calculateProgress = () => {
-                if (!WEEKLY_PLAN[selectedDay]) return 0;
+                if (!WORKOUT_PATTERN[selectedPatternKey]) return 0;
                 
-                const dayPlan = WEEKLY_PLAN[selectedDay];
-                const totalItems = dayPlan.warmup.length + dayPlan.main.length;
+                const currentPlan = WORKOUT_PATTERN[selectedPatternKey];
+                const totalItems = currentPlan.warmup.length + currentPlan.main.length;
                 
                 let checkedCount = 0;
-                [...dayPlan.warmup, ...dayPlan.main].forEach(item => {
+                [...currentPlan.warmup, ...currentPlan.main].forEach(item => {
                     if (checkedItems[`${item.id}`]) checkedCount++;
                 });
 
@@ -237,13 +272,16 @@
 
                 setIsSaving(true);
 
+                const currentPlan = WORKOUT_PATTERN[selectedPatternKey];
+
                 const newLog = {
                     dateString: selectedDate,
                     displayDate: new Date(selectedDate).toLocaleDateString('tr-TR'),
                     timestamp: new Date().getTime(),
-                    day: selectedDay,
+                    day: currentPlan.shortTitle, // E-Tablo'da görünecek ad (örn: 1. Gün)
+                    patternKey: selectedPatternKey, // Teknik takip için ID (örn: day1)
                     progress: progress,
-                    focus: WEEKLY_PLAN[selectedDay] ? WEEKLY_PLAN[selectedDay].focus : "Özel Antrenman"
+                    focus: currentPlan.focus
                 };
 
                 const newHistory = [newLog, ...history];
@@ -259,13 +297,19 @@
                     });
                 } catch (error) {
                     console.error("Google Sheets Hatası:", error);
-                    alert("Yerel kayıt başarılı ama Google Sheets'e gönderilemedi.");
+                    // alert("Yerel kayıt başarılı ama Google Sheets'e gönderilemedi."); // Kullanıcıyı çok sıkmamak için alert kapalı
                 }
 
                 setCheckedItems({});
                 setIsSaving(false);
                 setShowConfetti(true);
                 setTimeout(() => setShowConfetti(false), 3000);
+                
+                // Kaydettikten sonra otomatik olarak bir sonraki güne geç (Kullanıcı isterse değiştirir)
+                const currentIndex = PATTERN_KEYS.indexOf(selectedPatternKey);
+                const nextIndex = (currentIndex + 1) % PATTERN_KEYS.length;
+                setSelectedPatternKey(PATTERN_KEYS[nextIndex]);
+                
                 setActiveTab('stats');
             };
 
@@ -299,16 +343,19 @@
                     const hasWorkout = logsForDay.length > 0;
                     const isComplete = logsForDay.some(h => h.progress === 100);
 
+                    // O gün yapılan antrenmanın kısaltmasını bul (örn: 1. Gün)
+                    const dayLabel = hasWorkout ? (logsForDay[0].day || "").replace('. Gün', '') : null;
+
                     days.push(
                         <div key={d} className="aspect-square p-1 relative">
-                            <div className={`w-full h-full rounded-lg flex items-center justify-center text-sm font-medium border
+                            <div className={`w-full h-full rounded-lg flex flex-col items-center justify-center text-sm font-medium border
                                 ${hasWorkout 
                                 ? (isComplete ? 'bg-green-100 border-green-300 text-green-800' : 'bg-blue-100 border-blue-300 text-blue-800')
                                 : 'bg-white border-slate-100 text-slate-400'}
                             `}>
-                                {d}
+                                <span>{d}</span>
                                 {hasWorkout && (
-                                    <div className={`absolute bottom-1 w-1.5 h-1.5 rounded-full ${isComplete ? 'bg-green-500' : 'bg-blue-500'}`}></div>
+                                    <span className="text-[9px] font-bold opacity-70">Gün {dayLabel}</span>
                                 )}
                             </div>
                         </div>
@@ -343,7 +390,7 @@
                             </div>
 
                             {activeTab === 'workout' && (
-                                <div className="bg-slate-100 p-2 rounded-lg flex items-center justify-between mb-2">
+                                <div className="bg-slate-100 p-2 rounded-lg flex items-center justify-between mb-3">
                                     <div className="flex items-center gap-2 w-full">
                                         <CalendarIcon className="w-5 h-5 text-slate-500" />
                                         <input 
@@ -359,22 +406,33 @@
                                 </div>
                             )}
                             
+                            {/* Pattern Selector (Horizontal Scroll) */}
                             {activeTab === 'workout' && (
-                                <div className="overflow-x-auto whitespace-nowrap pb-1 hide-scrollbar -mx-4 px-4">
-                                    <div className="flex space-x-2">
-                                        {DAYS.map(day => (
-                                            <button
-                                                key={day}
-                                                onClick={() => setSelectedDay(day)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${
-                                                    selectedDay === day 
-                                                        ? 'bg-slate-800 text-white border-slate-800' 
-                                                        : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                                                }`}
-                                            >
-                                                {day}
-                                            </button>
-                                        ))}
+                                <div>
+                                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1 px-1">Program Seçimi</p>
+                                    <div className="overflow-x-auto whitespace-nowrap pb-1 hide-scrollbar -mx-4 px-4">
+                                        <div className="flex space-x-2">
+                                            {PATTERN_KEYS.map(key => {
+                                                const item = WORKOUT_PATTERN[key];
+                                                const isSelected = selectedPatternKey === key;
+                                                return (
+                                                    <button
+                                                        key={key}
+                                                        onClick={() => setSelectedPatternKey(key)}
+                                                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border flex flex-col items-center min-w-[80px] ${
+                                                            isSelected
+                                                                ? 'bg-slate-800 text-white border-slate-800 shadow-md scale-105' 
+                                                                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                                                        }`}
+                                                    >
+                                                        <span className="text-[10px] opacity-80">{item.shortTitle}</span>
+                                                        <span className={`text-[10px] truncate max-w-[70px] ${isSelected ? 'text-blue-300' : 'text-slate-400'}`}>
+                                                            {item.focus.split('-')[0]}
+                                                        </span>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -393,117 +451,137 @@
                         {activeTab === 'workout' ? (
                             <div className="space-y-6">
                                 
-                                {!WEEKLY_PLAN[selectedDay] ? (
-                                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-center">
-                                        <p className="text-amber-800 font-medium">Bu gün için planlı bir antrenman yok (Dinlenme).</p>
-                                        <p className="text-xs text-amber-600 mt-1">Antrenman yapmak istiyorsan yukarıdan bir gün seçebilirsin.</p>
+                                <React.Fragment>
+                                    {/* Info Card */}
+                                    <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl relative overflow-hidden">
+                                        <div className="relative z-10">
+                                            <div className="flex justify-between items-start">
+                                                <h2 className="text-xl font-bold text-blue-900 mb-1">
+                                                    {WORKOUT_PATTERN[selectedPatternKey].shortTitle}
+                                                </h2>
+                                                {/* Next Suggestion Badge */}
+                                                <span className="bg-blue-200 text-blue-800 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
+                                                    Şu Anki Hedef
+                                                </span>
+                                            </div>
+                                            <p className="text-md font-semibold text-blue-800 mt-1">
+                                                {WORKOUT_PATTERN[selectedPatternKey].focus}
+                                            </p>
+                                            <p className="text-sm text-blue-600 mt-1 opacity-80">
+                                                {WORKOUT_PATTERN[selectedPatternKey].desc}
+                                            </p>
+                                        </div>
+                                        <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-4 translate-y-4">
+                                            <Activity className="w-32 h-32 text-blue-900" />
+                                        </div>
                                     </div>
-                                ) : (
-                                    <React.Fragment>
-                                        <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl">
-                                            <h2 className="text-lg font-bold text-blue-900">{WEEKLY_PLAN[selectedDay].focus}</h2>
-                                            <p className="text-sm text-blue-700">{WEEKLY_PLAN[selectedDay].desc}</p>
-                                        </div>
 
-                                        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 p-3 rounded-lg text-sm text-amber-800">
-                                            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                                            <p>Dizinde "batma" veya "keskin acı" hissedersen hareketi bırak.</p>
-                                        </div>
+                                    {/* Safety Warning */}
+                                    <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 p-3 rounded-lg text-sm text-amber-800">
+                                        <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                                        <p>Dizinde "batma" veya "keskin acı" hissedersen hareketi bırak.</p>
+                                    </div>
 
-                                        <div>
-                                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-                                                Zorunlu Isınma & Rehab
-                                            </h3>
-                                            <div className="space-y-3">
-                                                {WEEKLY_PLAN[selectedDay].warmup.map((item) => {
-                                                    const isChecked = checkedItems[item.id] || false;
-                                                    return (
-                                                        <div 
-                                                            key={item.id}
-                                                            onClick={() => toggleCheck(item.id)}
-                                                            className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-4 ${
-                                                                isChecked 
-                                                                ? 'bg-emerald-50 border-emerald-200 opacity-70' 
-                                                                : 'bg-white border-amber-200 shadow-sm'
-                                                            }`}
-                                                        >
-                                                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                                                                isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300'
-                                                            }`}>
-                                                                {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
-                                                            </div>
-                                                            <div>
-                                                                <h4 className={`font-semibold text-sm ${isChecked ? 'text-emerald-800 line-through' : 'text-slate-800'}`}>
-                                                                    {item.name}
-                                                                </h4>
-                                                                <p className="text-xs text-slate-500 mt-0.5">{item.sets}</p>
-                                                                {item.important && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">VMO İÇİN ŞART</span>}
-                                                            </div>
+                                    {/* Warmup */}
+                                    <div>
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                            Zorunlu Isınma & Rehab
+                                        </h3>
+                                        <div className="space-y-3">
+                                            {WORKOUT_PATTERN[selectedPatternKey].warmup.map((item) => {
+                                                const isChecked = checkedItems[item.id] || false;
+                                                return (
+                                                    <div 
+                                                        key={item.id}
+                                                        onClick={() => toggleCheck(item.id)}
+                                                        className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-4 ${
+                                                            isChecked 
+                                                            ? 'bg-emerald-50 border-emerald-200 opacity-70' 
+                                                            : 'bg-white border-amber-200 shadow-sm'
+                                                        }`}
+                                                    >
+                                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                                            isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300'
+                                                        }`}>
+                                                            {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
                                                         </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-                                                Ana Antrenman
-                                            </h3>
-                                            <div className="space-y-3">
-                                                {WEEKLY_PLAN[selectedDay].main.map((item) => {
-                                                    const isChecked = checkedItems[item.id] || false;
-                                                    return (
-                                                        <div 
-                                                            key={item.id}
-                                                            onClick={() => toggleCheck(item.id)}
-                                                            className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center gap-4 ${
-                                                                isChecked 
-                                                                ? 'bg-slate-50 border-slate-200 opacity-60' 
-                                                                : 'bg-white border-slate-200 shadow-sm'
-                                                            }`}
-                                                        >
-                                                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                                                                isChecked ? 'bg-blue-500 border-blue-500' : 'border-slate-300'
-                                                            }`}>
-                                                                {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
-                                                            </div>
-                                                            <div>
-                                                                <h4 className={`font-semibold text-sm ${isChecked ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
-                                                                    {item.name}
-                                                                </h4>
-                                                                <p className="text-xs text-slate-500 mt-0.5">{item.sets}</p>
-                                                                {item.warning && <p className="text-[10px] text-red-500 mt-1 font-bold">{item.warning}</p>}
-                                                            </div>
+                                                        <div>
+                                                            <h4 className={`font-semibold text-sm ${isChecked ? 'text-emerald-800 line-through' : 'text-slate-800'}`}>
+                                                                {item.name}
+                                                            </h4>
+                                                            <p className="text-xs text-slate-500 mt-0.5">{item.sets}</p>
+                                                            {item.important && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">VMO İÇİN ŞART</span>}
                                                         </div>
-                                                    );
-                                                })}
-                                            </div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
+                                    </div>
 
-                                        <div className="pt-4 pb-8">
-                                            <button 
-                                                onClick={finishWorkout}
-                                                disabled={isSaving}
-                                                className={`w-full text-white py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-all
-                                                    ${isSaving ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 active:scale-95'}
-                                                `}
-                                            >
-                                                {isSaving ? (
-                                                    <React.Fragment>
-                                                        <Loader2 className="w-5 h-5 animate-spin" /> Kaydediliyor...
-                                                    </React.Fragment>
-                                                ) : (
-                                                    <React.Fragment>
-                                                        <Save className="w-5 h-5" /> 
-                                                        {new Date(selectedDate).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} Kaydet
-                                                    </React.Fragment>
-                                                )}
-                                            </button>
+                                    {/* Main Workout */}
+                                    <div>
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                            Ana Antrenman
+                                        </h3>
+                                        <div className="space-y-3">
+                                            {WORKOUT_PATTERN[selectedPatternKey].main.map((item) => {
+                                                const isChecked = checkedItems[item.id] || false;
+                                                return (
+                                                    <div 
+                                                        key={item.id}
+                                                        onClick={() => toggleCheck(item.id)}
+                                                        className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center gap-4 ${
+                                                            isChecked 
+                                                            ? 'bg-slate-50 border-slate-200 opacity-60' 
+                                                            : 'bg-white border-slate-200 shadow-sm'
+                                                        }`}
+                                                    >
+                                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                                            isChecked ? 'bg-blue-500 border-blue-500' : 'border-slate-300'
+                                                        }`}>
+                                                            {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
+                                                        </div>
+                                                        <div>
+                                                            <h4 className={`font-semibold text-sm ${isChecked ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
+                                                                {item.name}
+                                                            </h4>
+                                                            <p className="text-xs text-slate-500 mt-0.5">{item.sets}</p>
+                                                            {item.warning && <p className="text-[10px] text-red-500 mt-1 font-bold">{item.warning}</p>}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
-                                    </React.Fragment>
-                                )}
+                                    </div>
+
+                                    {/* Finish Button */}
+                                    <div className="pt-4 pb-8">
+                                        <button 
+                                            onClick={finishWorkout}
+                                            disabled={isSaving}
+                                            className={`w-full text-white py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-all
+                                                ${isSaving ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 active:scale-95'}
+                                            `}
+                                        >
+                                            {isSaving ? (
+                                                <React.Fragment>
+                                                    <Loader2 className="w-5 h-5 animate-spin" /> Kaydediliyor...
+                                                </React.Fragment>
+                                            ) : (
+                                                <React.Fragment>
+                                                    <Save className="w-5 h-5" /> 
+                                                    {WORKOUT_PATTERN[selectedPatternKey].shortTitle}'ü Bitir & Kaydet
+                                                </React.Fragment>
+                                            )}
+                                        </button>
+                                        <p className="text-center text-xs text-slate-400 mt-3">
+                                            Kaydettikten sonra otomatik olarak {WORKOUT_PATTERN[selectedPatternKey].id === 'day5' ? '1. Gün' : 'bir sonraki güne'} geçecektir.
+                                        </p>
+                                    </div>
+                                </React.Fragment>
                             </div>
                         ) : (
+                            /* STATS TAB */
                             <div className="space-y-6 animate-fade-in">
                                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                                     <div className="flex items-center justify-between mb-4">
